@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from .market import get_share_price
 from .database import write_account, read_account, write_log
+from .notifications import notify_trade
 
 load_dotenv(override=True)
 
@@ -98,6 +99,7 @@ class Account(BaseModel):
         self.balance -= total_cost
         self.save()
         write_log(self.name, "account", f"Bought {quantity} of {symbol}")
+        notify_trade(self.name, "buy", symbol, quantity, buy_price, rationale, self.balance)
         return "Completed. Latest details:\n" + self.report()
 
     def sell_shares(self, symbol: str, quantity: int, rationale: str) -> str:
@@ -124,6 +126,7 @@ class Account(BaseModel):
         self.balance += total_proceeds
         self.save()
         write_log(self.name, "account", f"Sold {quantity} of {symbol}")
+        notify_trade(self.name, "sell", symbol, quantity, sell_price, rationale, self.balance)
         return "Completed. Latest details:\n" + self.report()
 
     def calculate_portfolio_value(self):

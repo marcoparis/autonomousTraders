@@ -89,7 +89,7 @@ def require_trader(name: str) -> dict:
 
 @app.get("/api/traders")
 def get_traders() -> list[dict]:
-    """The four traders on the floor."""
+    """The traders on the floor."""
     return roster
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "autonomous-traders"
 version = "0.1.0"
-description = "Quattro agenti LLM che gestiscono un portafoglio azionario usando tool e risorse esposti via MCP"
+description = "Tre agenti LLM che gestiscono un portafoglio azionario usando tool e risorse esposti via MCP"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 

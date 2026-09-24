@@ -1,6 +1,6 @@
 # Autonomous Traders
 
-Quattro agenti LLM gestiscono ciascuno un portafoglio azionario da 10.000 dollari.
+Tre agenti LLM gestiscono ciascuno un portafoglio azionario da 10.000 dollari.
 Ricercano notizie sul web, consultano i prezzi, comprano, vendono e riscrivono la
 propria strategia in base a come sono andati i trade precedenti. Tutti i loro
 strumenti sono esposti attraverso server **MCP** (Model Context Protocol).
@@ -10,14 +10,13 @@ di ragionamento di ciascun agente.
 
 ---
 
-## I quattro trader
+## I tre trader
 
-| Nome | Ispirazione | Strategia |
+| Nome | Profilo | Strategia |
 |---|---|---|
-| Warren | Warren Buffett | value investing, orizzonte lungo, poche mosse |
-| George | George Soros | macro aggressivo, contrarian, scommesse nette |
-| Ray | Ray Dalio | sistematico, risk parity, diversificazione |
-| Cathie | Cathie Wood | innovazione dirompente, focus su ETF crypto |
+| Alpha | alto rischio | posizioni concentrate, titoli volatili e di crescita, momentum |
+| Beta | rischio medio | portafoglio diversificato, mix di crescita e indici, liquidità moderata |
+| Gamma | basso rischio | ETF diversificati e dividendi, molta liquidità, poche operazioni |
 
 Le strategie iniziali stanno in `backend/reset.py`. Gli agenti hanno un tool
 `change_strategy`: dopo qualche ciclo il testo che leggi nella dashboard non è
@@ -26,7 +25,7 @@ più quello di partenza, l'hanno riscritto loro.
 ## Architettura
 
 ```
-  backend/trading_floor.py          il motore: ogni N minuti lancia i 4 trader
+  backend/trading_floor.py          il motore: ogni N minuti lancia i 3 trader
             |
             |  per ogni trader, 6 server MCP come sottoprocessi (stdio)
             v
@@ -131,8 +130,8 @@ uv run pytest -q
 
 ## Costi
 
-Ogni ciclo lancia quattro agenti, ognuno con un sub-agente ricercatore che fa più
-ricerche web. Con `RUN_EVERY_N_MINUTES=60` sono 96 esecuzioni di agente al giorno.
+Ogni ciclo lancia tre agenti, ognuno con un sub-agente ricercatore che fa più
+ricerche web. Con `RUN_EVERY_N_MINUTES=60` sono 72 esecuzioni di agente al giorno.
 Tienilo presente prima di lasciarlo acceso una notte. In sviluppo alza
 l'intervallo, e ricorda che senza `MASSIVE_API_KEY` i prezzi arrivano dal
 simulatore a costo zero.
@@ -167,7 +166,17 @@ ACCOUNTS_DB=data/accounts.db uv run -m backend.trading_floor   # un po' di cicli
 git add data/accounts.db && git commit -m "Dati demo"
 ```
 
-La demo mostra dati veri, ma congelati al momento del commit.
+La demo pubblicata usa dati **simulati**, generati senza nessun modello da
+`backend/demo_seed.py` con il simulatore di prezzi: operazioni, motivazioni e
+rendimenti sono inventati e servono solo a mostrare la dashboard. Per rigenerarli:
+
+```bash
+ACCOUNTS_DB=data/accounts.db uv run -m backend.demo_seed
+```
+
+Il badge in alto nella dashboard dice "Simulated". Con un modello vero
+(vedi `TRADER_MODEL` in `.env.example`) e il motore acceso i dati diventano quelli
+prodotti dagli agenti.
 
 ### 2. Vetrina che si aggiorna da sola (ancora gratis)
 
@@ -197,7 +206,7 @@ token: un motore sempre acceso richiama gli agenti a ogni ciclo, 24 ore su 24.
 
 ## Limiti noti
 
-- Un ciclo apre circa 24 sottoprocessi MCP (6 per trader). Funziona bene su un
+- Un ciclo apre circa 18 sottoprocessi MCP (6 per trader). Funziona bene su un
   portatile, molto meno su un'istanza da 512 MB.
 - SQLite con un processo che scrive e due che leggono: abilita il journal WAL se
   vedi errori "database is locked".

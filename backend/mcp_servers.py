@@ -10,6 +10,19 @@ PROJECT_DIR = str(Path(__file__).resolve().parent.parent)
 tavily_env = {"TAVILY_API_KEY": os.getenv("TAVILY_API_KEY")}
 TIMEOUT = 120
 
+
+def _passthrough_env(*names: str) -> dict[str, str]:
+    """Variabili da girare a un server MCP. I sottoprocessi stdio ereditano solo
+    un ambiente minimo (PATH, HOME...): senza questo, su GitHub Actions dove non
+    c'e' un .env, i server non vedrebbero NTFY_TOPIC ne' ACCOUNTS_DB."""
+    return {n: os.environ[n] for n in names if os.environ.get(n)}
+
+
+# Il DB e le notifiche servono ai server che scrivono i conti e mandano le push
+SERVER_ENV = _passthrough_env(
+    "ACCOUNTS_DB", "NTFY_TOPIC", "NTFY_SERVER", "NTFY_TOKEN", "DASHBOARD_URL"
+)
+
 # The market data server for the trader.
 # With a key, hand the agent Massive's own market data server, run locally over stdio.
 # Without one, use our market server, which serves simulated prices.
@@ -33,8 +46,8 @@ else:
 def trader_mcp_servers() -> list[MCPServerStdio]:
     """The trader's MCP servers: our Accounts server, Push Notification and Market data."""
     params = [
-        {"command": "uv", "args": ["run", "-m", "backend.accounts_server"], "cwd": PROJECT_DIR},
-        {"command": "uv", "args": ["run", "-m", "backend.push_server"], "cwd": PROJECT_DIR},
+        {"command": "uv", "args": ["run", "-m", "backend.accounts_server"], "cwd": PROJECT_DIR, "env": SERVER_ENV},
+        {"command": "uv", "args": ["run", "-m", "backend.push_server"], "cwd": PROJECT_DIR, "env": SERVER_ENV},
         market_params,
     ]
     return [MCPServerStdio(p, client_session_timeout_seconds=TIMEOUT) for p in params]

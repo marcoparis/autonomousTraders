@@ -42,10 +42,9 @@ TIMEOUT_SECONDS = 5
 
 # Un'emoji per trader, cosi' si riconosce il mittente dalla notifica.
 TRADER_TAGS = {
-    "warren": "moneybag",
-    "george": "chart_with_upwards_trend",
-    "ray": "balance_scale",
-    "cathie": "rocket",
+    "alpha": "rocket",
+    "beta": "balance_scale",
+    "gamma": "shield",
 }
 
 
@@ -166,6 +165,46 @@ def notify_trader_push(message: str, trader: Optional[str] = None) -> bool:
     tag = TRADER_TAGS.get(name.lower(), "speech_balloon")
     title = f"{name.title()} ha operato" if name else "Trading floor"
     return notify(message, title=title, priority="default", tags=[tag])
+
+
+def notify_trade(
+    trader: str,
+    side: str,
+    symbol: str,
+    quantity: int,
+    price: float,
+    rationale: str,
+    balance: float,
+) -> bool:
+    """
+    Notifica per una singola operazione eseguita da un trader.
+
+    Args:
+        side:      "buy" o "sell"
+        price:     prezzo unitario di esecuzione (spread incluso)
+        rationale: la motivazione che il trader ha dichiarato
+        balance:   liquidita' rimasta dopo l'operazione
+    """
+    buying = side == "buy"
+    verb = "Acquisto" if buying else "Vendita"
+    total = price * quantity
+    reason = " ".join((rationale or "").split())
+    if len(reason) > 400:
+        reason = reason[:397] + "..."
+
+    lines = [
+        f"{verb} di {quantity} {symbol} a ${price:,.2f} (totale {_money(total)})",
+        f"Liquidita' residua: {_money(balance)}",
+    ]
+    if reason:
+        lines.append(f"Motivo: {reason}")
+
+    return notify(
+        "\n".join(lines),
+        title=f"{trader}: {verb.lower()} {symbol}",
+        priority="default",
+        tags=[TRADER_TAGS.get(trader.lower(), "speech_balloon")],
+    )
 
 
 def notify_cycle_summary(rows: Sequence[tuple[str, float, float]]) -> bool:

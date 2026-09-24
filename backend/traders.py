@@ -2,7 +2,8 @@ from contextlib import AsyncExitStack
 from .accounts_client import read_accounts_resource, read_strategy_resource
 from .tracers import make_trace_id
 from .notifications import notify_trader_error
-from agents import Agent, Tool, Runner, OpenAIChatCompletionsModel, trace
+from agents import Agent, Tool, Runner, OpenAIChatCompletionsModel, ModelSettings, trace
+from agents.retry import ModelRetrySettings, retry_policies
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import os
@@ -22,7 +23,9 @@ deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
 google_api_key = os.getenv("GOOGLE_API_KEY")
 grok_api_key = os.getenv("GROK_API_KEY")
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 GROK_BASE_URL = "https://api.x.ai/v1"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -30,14 +33,32 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 MAX_TURNS = 30
 
+# I piani gratuiti rispondono spesso 503 (sovraccarico) o 429 (rate limit): sono
+# errori transitori, quindi si riprova con attesa crescente invece di fermare il trader.
+MODEL_SETTINGS = ModelSettings(
+    retry=ModelRetrySettings(
+        max_retries=6,
+        backoff={"initial_delay": 10, "max_delay": 90, "multiplier": 2, "jitter": True},
+        policy=retry_policies.any(
+            retry_policies.http_status([429, 500, 502, 503, 504]),
+            retry_policies.network_error(),
+        ),
+    )
+)
+
 openrouter_client = AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=openrouter_api_key)
 deepseek_client = AsyncOpenAI(base_url=DEEPSEEK_BASE_URL, api_key=deepseek_api_key)
 grok_client = AsyncOpenAI(base_url=GROK_BASE_URL, api_key=grok_api_key)
 gemini_client = AsyncOpenAI(base_url=GEMINI_BASE_URL, api_key=google_api_key)
+groq_client = AsyncOpenAI(base_url=GROQ_BASE_URL, api_key=groq_api_key)
 
 
 def get_model(model_name: str):
-    if "/" in model_name:
+    # Prefisso esplicito "groq:" per non confondersi con i modelli OpenRouter,
+    # che hanno anch'essi lo slash (es. "groq:openai/gpt-oss-120b").
+    if model_name.startswith("groq:"):
+        return OpenAIChatCompletionsModel(model=model_name[len("groq:"):], openai_client=groq_client)
+    elif "/" in model_name:
         return OpenAIChatCompletionsModel(model=model_name, openai_client=openrouter_client)
     elif "deepseek" in model_name:
         return OpenAIChatCompletionsModel(model=model_name, openai_client=deepseek_client)
@@ -54,6 +75,7 @@ async def get_researcher(mcp_servers, model_name) -> Agent:
         name="Researcher",
         instructions=researcher_instructions(),
         model=get_model(model_name),
+        model_settings=MODEL_SETTINGS,
         mcp_servers=mcp_servers,
     )
     return researcher
@@ -78,6 +100,7 @@ class Trader:
             name=self.name,
             instructions=trader_instructions(self.name),
             model=get_model(self.model_name),
+            model_settings=MODEL_SETTINGS,
             tools=[tool],
             mcp_servers=trader_mcp_servers,
         )

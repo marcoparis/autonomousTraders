@@ -11,7 +11,7 @@
 #
 # Costo: zero. I runner di GitHub Actions sono gratuiti senza limiti sui repo
 # pubblici; sui privati il piano free da' 2000 minuti/mese, e un ciclo qui
-# dura 2-4 minuti, quindi anche ogni ora si resta ben sotto la soglia.
+# dura qualche minuto (i trader girano uno alla volta), quindi anche ogni ora si resta ben sotto la soglia.
 #
 # Setup richiesto, una tantum:
 #   Settings del repo -> Secrets and variables -> Actions -> New repository
@@ -22,8 +22,11 @@
 name: Trading cycle
 
 on:
-  schedule:
-    - cron: "0 14-21/2 * * 1-5"   # ogni 2 ore, lun-ven, 14-21 UTC (~ orario borsa USA)
+  # Cron DISATTIVATO: la demo pubblicata usa dati simulati (backend/demo_seed.py) e
+  # non ha un modello configurato. Per riattivare gli aggiornamenti automatici
+  # togli il commento, imposta i secrets e la variabile TRADER_MODEL (vedi sotto).
+  # schedule:
+  #   - cron: "0 15,20 * * 1-5"   # 2 volte al giorno, lun-ven, 15:00 e 20:00 UTC
   workflow_dispatch: {}     # bottone "Run workflow" nella tab Actions, per test
 
 # Evita che due esecuzioni si sovrappongano se un ciclo dura piu' di un'ora.
@@ -37,7 +40,7 @@ permissions:
 jobs:
   run-cycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +63,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # non serve con Gemini
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TRADER_MODEL: ${{ vars.TRADER_MODEL || 'gpt-5.4-mini' }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
