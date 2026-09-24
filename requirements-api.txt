@@ -1,0 +1,25 @@
+# Dipendenze del solo servizio API in sola lettura (deploy "vetrina").
+#
+# backend/api.py importa backend.trading_floor per la lista dei trader, che a
+# sua volta importa l'Agents SDK: per questo openai-agents e' qui dentro anche
+# se su questo servizio nessun agente viene mai eseguito.
+#
+# "massive" e' qui perche' backend/market.py fa "from massive import RESTClient"
+# a livello di modulo, quindi l'import avviene anche senza MASSIVE_API_KEY.
+# Se rendi quell'import pigro (vedi README, sezione miglioramenti) puoi
+# toglierlo e alleggerire l'istanza.
+#
+# Restano fuori gradio, pandas e plotly, che servono solo alla dashboard
+# Gradio: su un'istanza da 512 MB ogni import pesa.
+#
+# Per lo sviluppo completo in locale usa invece pyproject.toml:
+#     uv sync
+
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+openai-agents==0.22.3
+mcp==1.28.1
+massive==2.8.0
+python-dotenv==1.2.3
+pydantic==2.12.3
+requests==2.34.2

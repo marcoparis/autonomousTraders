@@ -1,0 +1,71 @@
+# Render Blueprint: deploy "vetrina" a costo zero.
+#
+# Cosa mette online:
+#   - il frontend Vite come Static Site (gratis, sempre acceso, niente spin-down)
+#   - l'API FastAPI in sola lettura come Web Service free
+#
+# Cosa NON mette online: il motore (backend/trading_floor.py).
+# Non e' una dimenticanza. Su Render i background worker non hanno un
+# instance type gratuito, il filesystem dei servizi free e' effimero e
+# il runtime Python non ha npx, che serve a due dei server MCP.
+# Il motore lo esegui in locale e committi un accounts.db popolato,
+# oppure passi al Dockerfile su un piano a pagamento (vedi README).
+
+services:
+  # --------------------------------------------------------------------
+  # API read-only
+  # --------------------------------------------------------------------
+  - type: web
+    name: trading-floor-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: pip install -r requirements-api.txt
+    startCommand: uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+
+      # Serve al tracing dell'Agents SDK importato da backend.trading_floor
+      - key: OPENAI_API_KEY
+        sync: false
+
+      # Lasciata vuota di proposito: l'API usa il simulatore di prezzi,
+      # cosi' la demo non consuma quota di dati di mercato.
+      # - key: MASSIVE_API_KEY
+
+      # Il database della demo, committato nel repo (vedi .gitignore) invece
+      # dell'accounts.db locale. Se usi il workflow GitHub Actions per
+      # l'aggiornamento automatico, deve essere lo STESSO percorso impostato
+      # li' dentro come ACCOUNTS_DB.
+      - key: ACCOUNTS_DB
+        value: data/accounts.db
+
+      # Origini ammesse dal CORS. Aggiorna con l'URL reale del sito statico
+      # dopo il primo deploy.
+      - key: ALLOWED_ORIGINS
+        value: https://trading-floor.onrender.com
+
+  # --------------------------------------------------------------------
+  # Frontend statico
+  # --------------------------------------------------------------------
+  - type: web
+    name: trading-floor
+    runtime: static
+    branch: main
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    envVars:
+      # Vite inietta le variabili VITE_* al momento della build.
+      # In sviluppo resta vuota e vale il proxy di vite.config.ts.
+      - key: VITE_API_BASE
+        value: https://trading-floor-api.onrender.com
+    routes:
+      # SPA: qualunque path ricade su index.html
+      - type: rewrite
+        source: /*
+        destination: /index.html

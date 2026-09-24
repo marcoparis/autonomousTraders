@@ -1,0 +1,47 @@
+[project]
+name = "autonomous-traders"
+version = "0.1.0"
+description = "Quattro agenti LLM che gestiscono un portafoglio azionario usando tool e risorse esposti via MCP"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+
+dependencies = [
+    # Runtime degli agenti + client MCP (agents.mcp.MCPServerStdio)
+    "openai-agents>=0.22,<1",
+    # SDK MCP: FastMCP per i server, ClientSession per accounts_client
+    "mcp>=1.19,<2",
+    # Client dati di mercato (ex Polygon.io). Opzionale a runtime:
+    # senza MASSIVE_API_KEY si usa market_simulator.
+    "massive>=2.8,<3",
+    # API HTTP read-only consumata dal frontend
+    "fastapi>=0.118,<1",
+    "uvicorn[standard]>=0.38,<1",
+    # Dashboard alternativa
+    "gradio>=6,<7",
+    "pandas>=2.2",
+    "plotly>=6",
+    # Trasversali
+    "python-dotenv>=1.1,<2",
+    "pydantic>=2.11,<3",
+    "requests>=2.32,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend", "demo"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
