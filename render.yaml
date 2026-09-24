@@ -46,7 +46,7 @@ services:
       # Origini ammesse dal CORS. Aggiorna con l'URL reale del sito statico
       # dopo il primo deploy.
       - key: ALLOWED_ORIGINS
-        value: https://trading-floor.onrender.com
+        value: https://trading-floor-s5tt.onrender.com
 
   # --------------------------------------------------------------------
   # Frontend statico
