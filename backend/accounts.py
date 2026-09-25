@@ -1,10 +1,17 @@
+"""Il conto di un trader: saldo, posizioni, operazioni e storico del valore.
+
+Lo stato e' salvato come JSON nel database (database.py). Nella demo lo scrivono solo
+demo_seed.py e reset.py; con il motore reale lo scrivono gli agenti via buy/sell.
+"""
+
 from pydantic import BaseModel
 import json
 from dotenv import load_dotenv
 from datetime import datetime
 from .market import get_share_price
 from .database import write_account, read_account, write_log
-from .notifications import notify_trade
+# MODALITA' REALE: notifica push a ogni operazione (COME_RENDERLO_REALE.txt, punto 3.3a)
+# from .notifications import notify_trade
 
 load_dotenv(override=True)
 
@@ -99,7 +106,7 @@ class Account(BaseModel):
         self.balance -= total_cost
         self.save()
         write_log(self.name, "account", f"Bought {quantity} of {symbol}")
-        notify_trade(self.name, "buy", symbol, quantity, buy_price, rationale, self.balance)
+        # notify_trade(self.name, "buy", symbol, quantity, buy_price, rationale, self.balance)
         return "Completed. Latest details:\n" + self.report()
 
     def sell_shares(self, symbol: str, quantity: int, rationale: str) -> str:
@@ -126,7 +133,7 @@ class Account(BaseModel):
         self.balance += total_proceeds
         self.save()
         write_log(self.name, "account", f"Sold {quantity} of {symbol}")
-        notify_trade(self.name, "sell", symbol, quantity, sell_price, rationale, self.balance)
+        # notify_trade(self.name, "sell", symbol, quantity, sell_price, rationale, self.balance)
         return "Completed. Latest details:\n" + self.report()
 
     def calculate_portfolio_value(self):

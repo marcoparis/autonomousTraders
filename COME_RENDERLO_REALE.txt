@@ -1,0 +1,1429 @@
+COME RENDERE REALE AUTONOMOUS TRADERS (DA DEMO A AGENTI CHE OPERANO DAVVERO)
+=========================================================================
+
+STATO ATTUALE: DEMO
+-------------------
+Il repository contiene solo la vetrina: dashboard (frontend/), API in sola lettura
+(backend/api.py) e un database con operazioni INVENTATE (data/accounts.db), generate
+da backend/demo_seed.py senza nessun modello. Prezzi dal simulatore
+(backend/market_simulator.py). Nessuna chiave API e' necessaria.
+
+Il "motore" (i tre agenti LLM che ricercano, decidono e operano) NON e' nel repo:
+il suo codice completo e' in fondo a questo file, identico all'originale, pronto da
+ricopiare. Lo trovi anche nella storia git (commit c1e5bdd e precedenti).
+
+Comandi pensati per PowerShell, dalla cartella del progetto. Non e' un consiglio
+finanziario e non esegue ordini veri: le operazioni sono su un conto virtuale.
+
+
+INDICE
+------
+  1. Cosa serve
+  2. Scegli il modello
+  3. Ripristina il motore (file da ricreare e 3 modifiche al codice esistente)
+  4. Prova in locale
+  5. Passa dalla demo ai dati veri online (Render)
+  6. Aggiornamento automatico con GitHub Actions
+  7. Prezzi reali (Massive)
+  8. Problemi frequenti
+  9. CODICE DA RICOPIARE (una sezione per file)
+
+
+1. COSA SERVE
+-------------
+- uv, Node 20+ (npx) e git.
+- Una chiave per un modello (punto 2).
+- TAVILY_API_KEY per la ricerca web (piano gratuito, circa 1000 crediti al mese).
+- Facoltativo: NTFY_TOPIC per le notifiche sul telefono (una per ogni operazione;
+  installa l'app ntfy e iscriviti a un topic lungo e casuale, e' pubblico).
+- Facoltativo: MASSIVE_API_KEY per prezzi azionari reali (punto 7).
+
+
+2. SCEGLI IL MODELLO
+--------------------
+A) OpenAI (consigliato per affidabilita', A PAGAMENTO)
+   .env:  OPENAI_API_KEY=sk-...
+          TRADER_MODEL=gpt-5.4-mini
+   Costo a consumo: fai un ciclo di prova e guarda l'utilizzo su
+   platform.openai.com prima di automatizzare. L'abbonamento Claude Pro o ChatGPT
+   NON include l'API.
+
+B) Gemini gratuito (Google AI Studio, INSTABILE)
+   .env:  GOOGLE_API_KEY=...
+          TRADER_MODEL=gemini-3.5-flash-lite
+   Limiti visti: Flash Lite 15 richieste/minuto e 500/giorno; i modelli Flash
+   maggiori solo 20 richieste/giorno (inutilizzabili). Errori 503 "high demand"
+   frequenti: il codice riprova fino a 6 volte, ma se Google e' sovraccarico non
+   basta. Alternativa: TRADER_MODEL=gemini-3.1-flash-lite.
+
+C) Groq gratuito: sconsigliato. 8.000 token/minuto sono troppo pochi per un agente
+   con strumenti (nei test 429). Supporto nel codice:
+   TRADER_MODEL=groq:openai/gpt-oss-120b, GROQ_API_KEY.
+
+D) Claude via API: non implementato. Andrebbe aggiunto un client in get_model()
+   di backend/traders.py, come per Groq.
+
+
+3. RIPRISTINA IL MOTORE
+-----------------------
+3.1 Dipendenze (il pyproject.toml della demo non le ha):
+
+      uv add "openai-agents>=0.22,<1" "mcp>=1.19,<2" "massive>=2.8,<3" "requests>=2.32,<3"
+
+3.2 Ricrea questi file copiando le sezioni del punto 9 (il nome della sezione e'
+    il percorso del file), tutti dentro la cartella del progetto:
+
+      backend/notifications.py    notifiche ntfy
+      backend/tracers.py          scrive il flusso di ragionamento nel log
+      backend/templates.py        istruzioni e messaggi degli agenti
+      backend/mcp_servers.py      elenco dei server MCP di trader e researcher
+      backend/accounts_server.py  server MCP: conto del trader
+      backend/accounts_client.py  client che legge il conto dal server MCP
+      backend/market_server.py    server MCP: prezzi
+      backend/push_server.py      server MCP: notifica push
+      backend/traders.py          l'agente trader e la scelta del modello
+      backend/trading_floor.py    il motore: lancia i 3 trader a ciclo
+      .github/workflows/trading-cycle.yml   (solo per il punto 6)
+      Dockerfile                             (solo per un host sempre acceso, vedi 9)
+
+3.3 Tre modifiche ai file gia' presenti (ognuna ha un blocco commentato pronto):
+
+  a) backend/accounts.py: togli il commento a "from .notifications import notify_trade"
+     e alle due righe "notify_trade(...)" in buy_shares e sell_shares.
+  b) backend/market.py: togli il commento al blocco "MODALITA' REALE" in fondo al
+     file e cancella le due funzioni demo (get_share_price e is_market_open) sopra.
+     Serve solo se vuoi prezzi reali (punto 7); senza, il motore usa il simulatore.
+  c) backend/api.py non va toccato. Il nome del modello mostrato in dashboard e'
+     MODEL_LABEL (default "Simulato"): in modalita' reale impostalo al modello usato,
+     es. MODEL_LABEL=gpt-5.4-mini, nel .env locale e nell'Environment su Render.
+
+
+4. PROVA IN LOCALE (SEMPRE PRIMA DI PUBBLICARE)
+-----------------------------------------------
+1) Nel file .env (copia .env.example) metti le variabili del punto 1 e 2, e:
+     RUN_EVEN_WHEN_MARKET_IS_CLOSED=True      (per provare anche fuori orario)
+   ATTENZIONE: il .env vince sulle variabili impostate con $env: in PowerShell
+   (il codice usa load_dotenv con override): cambia i valori nel .env.
+
+2) Azzera i conti (crea Alpha, Beta, Gamma da 10.000 $, cancella lo storico inventato):
+     uv run -m backend.reset
+
+3) Lancia UN ciclo e misura il tempo:
+     $env:RUN_ONCE="true"
+     Measure-Command { uv run -m backend.trading_floor | Out-Default }
+   I trader girano UNO ALLA VOLTA con 30 secondi di pausa
+   (PAUSE_BETWEEN_TRADERS_SECONDS, 0 se il modello e' a pagamento senza limiti
+   stretti). Il programma stampa solo alla fine o in caso di errore: per vedere i
+   progressi guarda la dashboard.
+
+4) Esito:
+   - Nessuna riga "Error running trader ..." = ok, compaiono operazioni e notifiche.
+   - 503: modello sovraccarico, riprova piu' tardi o cambia modello.
+   - 429: limite raggiunto, aumenta PAUSE_BETWEEN_TRADERS_SECONDS o cambia modello.
+   - Non lanciare due cicli insieme sullo stesso database.
+
+5) Dashboard mentre lavora (tre terminali):
+     uv run python -m uvicorn backend.api:app --port 8000
+     cd frontend; npm run dev          (poi apri http://localhost:5173)
+     uv run -m backend.trading_floor   (il motore)
+
+Per far girare il motore in continuo invece di un ciclo: non impostare RUN_ONCE;
+RUN_EVERY_N_MINUTES (default 60) decide l'intervallo. Costo alto: ogni ciclo sono
+tre agenti, ognuno con un sub-agente che fa ricerche web.
+
+
+5. DALLA DEMO AI DATI VERI ONLINE (RENDER)
+------------------------------------------
+Il database pubblicato (data/accounts.db) contiene lo storico INVENTATO. Va azzerato
+prima del primo ciclo vero, altrimenti gli agenti proseguono sopra dati falsi:
+
+     uv run -m backend.reset
+     git add data/accounts.db
+     git commit -m "Azzera i dati della demo"
+     git push
+
+Poi fai girare un ciclo (locale, punto 4, oppure Actions, punto 6) e committa
+data/accounts.db: Render (autoDeploy) aggiorna la dashboard da solo.
+
+In render.yaml, servizio trading-floor-api:
+  - cambia il valore di MODEL_LABEL da "Simulato" al nome del modello usato
+    (es. gpt-5.4-mini): la dashboard lo mostrera' al posto di "Simulato";
+  - il badge in alto nella dashboard resta "Simulated" finche' l'API non ha
+    MASSIVE_API_KEY (punto 7).
+Il motore NON gira su Render free (niente background worker gratuiti, disco
+effimero, niente npx): per un motore sempre acceso serve il Dockerfile su un piano a
+pagamento (Starter circa 7$/mese + disco) o un VPS. Il costo dominante restano i
+token del modello.
+
+
+6. AGGIORNAMENTO AUTOMATICO CON GITHUB ACTIONS (2 CICLI AL GIORNO)
+------------------------------------------------------------------
+Ricrea .github/workflows/trading-cycle.yml (sezione del punto 9). Il cron e' gia'
+commentato: e' un job che fa da scheduler, il motore gira sul runner temporaneo di
+GitHub. Gratis sui repo pubblici, limite 45 minuti per job.
+
+1) Repo GitHub: Settings -> Secrets and variables -> Actions
+   Scheda Secrets (solo quelli che usi):
+     OPENAI_API_KEY  oppure  GOOGLE_API_KEY  (o GROQ_API_KEY)
+     TAVILY_API_KEY
+     NTFY_TOPIC      (facoltativo)
+   Scheda Variables:
+     TRADER_MODEL    es. gpt-5.4-mini  oppure  gemini-3.5-flash-lite
+2) Settings -> Actions -> General -> Workflow permissions ->
+   "Read and write permissions" -> Save (senza, il job non puo' committare).
+3) Nel workflow togli i "#" davanti a "schedule:" e "- cron:" (lun-ven, 15:00 e
+   20:00 UTC = 2 volte al giorno con la borsa USA aperta). Commit e push.
+4) Prova subito: scheda Actions -> "Trading cycle" -> "Run workflow". Deve comparire
+   un commit "Trading cycle ..." su data/accounts.db e Render fa il redeploy.
+Se il workflow fallisce ogni volta (es. Gemini in 503) ricommenta il cron per non
+ricevere email di errore.
+
+
+7. PREZZI REALI (MASSIVE)
+-------------------------
+Senza chiave i prezzi arrivano da backend/market_simulator.py (deterministici,
+inventati). Con il blocco "MODALITA' REALE" di backend/market.py attivo e
+MASSIVE_API_KEY impostata si usano prezzi veri (piano gratuito con limiti stretti).
+Attenzione alla coerenza: motore e API devono usare la STESSA sorgente, altrimenti
+i valori in dashboard non tornano. Scegli una strada:
+  - non mettere MASSIVE_API_KEY da nessuna parte: motore e API usano il simulatore
+    (gli agenti cercano notizie vere ma operano a prezzi simulati);
+  - oppure metti MASSIVE_API_KEY nei secrets di GitHub E nelle Environment del
+    servizio trading-floor-api su Render, e aggiungi "massive==2.8.0" a
+    requirements-api.txt.
+
+
+8. PROBLEMI FREQUENTI
+---------------------
+- "Connection closed" / "Timed out ... 120 seconds": un server MCP o il modello non
+  hanno risposto. Riprova; controlla che npx e uv funzionino.
+- 503 high demand (Gemini): sovraccarico di Google, non un tuo errore.
+- 429 / RateLimitError: quota superata (richieste o token al minuto/giorno).
+- Nessuna notifica: controlla NTFY_TOPIC e di essere iscritto allo stesso topic
+  nell'app ntfy. Test: uv run -m backend.notifications
+- Demo online vuota o vecchia: Ctrl+F5. L'API free su Render si addormenta dopo 15
+  minuti e la prima richiesta impiega circa un minuto.
+- "uv trampoline failed to canonicalize script path": .venv spostato o ricreato;
+  usa "uv run python -m uvicorn ..." o rifai "uv sync".
+- SQLite "database is locked": un processo scrive (motore) e due leggono; abilita il
+  journal WAL.
+- Il .env non va MAI committato (e' nel .gitignore). Controlla con git status.
+- Un ciclo apre circa 18 sottoprocessi MCP (6 per trader): ok su un portatile,
+  troppo per un'istanza da 512 MB.
+
+
+9. CODICE DA RICOPIARE
+----------------------
+Ogni sezione qui sotto inizia con una riga  >>> FILE: percorso  e finisce alla riga
+"<<< FINE". Il testo in mezzo e' il contenuto esatto del file. Il .env.example della
+modalita' reale e' in fondo.
+
+==============================================================================
+>>> FILE: backend/notifications.py
+==============================================================================
+"""
+Notifiche push via ntfy.sh per il trading floor.
+
+Perche' ntfy invece di Pushover:
+    Pushover richiede un account, una app a pagamento e due credenziali
+    (user key + application token). ntfy non richiede nulla: pubblichi su un
+    topic con una POST HTTP e chiunque sia iscritto a quel topic la riceve.
+    Per un progetto che si deve poter clonare ed eseguire in cinque minuti
+    e' la scelta giusta.
+
+Cosa notifica questo modulo:
+    1. il riepilogo che ogni trader invia a fine sessione (tool MCP "push")
+    2. la classifica di fine ciclo, con il valore di portafoglio di tutti
+    3. gli errori di un trader, che altrimenti finirebbero solo in un print
+
+Il punto 2 e' quello che conta davvero: il motore gira in loop ogni
+RUN_EVERY_N_MINUTES e consuma crediti LLM mentre nessuno guarda. La push di
+fine ciclo ti dice cosa e' successo senza tenere aperta la dashboard.
+
+Configurazione (.env):
+    NTFY_TOPIC       obbligatoria per abilitare le notifiche
+    NTFY_SERVER      opzionale, default https://ntfy.sh
+    NTFY_TOKEN       opzionale, Bearer token se il topic e' protetto
+    DASHBOARD_URL    opzionale, link aperto al tap sulla notifica
+
+Principio: una notifica non deve MAI far fallire un run.
+Tutto e' dentro try/except con timeout.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Iterable, Optional, Sequence
+
+import requests
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+DEFAULT_SERVER = "https://ntfy.sh"
+TIMEOUT_SECONDS = 5
+
+# Un'emoji per trader, cosi' si riconosce il mittente dalla notifica.
+TRADER_TAGS = {
+    "alpha": "rocket",
+    "beta": "balance_scale",
+    "gamma": "shield",
+}
+
+
+# --------------------------------------------------------------------------
+# Configurazione
+# --------------------------------------------------------------------------
+
+def _topic() -> str:
+    return (os.getenv("NTFY_TOPIC") or "").strip()
+
+
+def _server() -> str:
+    return (os.getenv("NTFY_SERVER") or DEFAULT_SERVER).rstrip("/")
+
+
+def _dashboard_url() -> Optional[str]:
+    url = (os.getenv("DASHBOARD_URL") or "").strip()
+    return url or None
+
+
+def is_enabled() -> bool:
+    """True se NTFY_TOPIC e' configurato. Senza topic il motore gira lo stesso."""
+    return bool(_topic())
+
+
+# --------------------------------------------------------------------------
+# Helper
+# --------------------------------------------------------------------------
+
+def _ascii_header(value: str) -> str:
+    """
+    Gli header HTTP devono essere latin-1: emoji e a capo li rompono.
+    Il corpo viaggia in UTF-8, quindi le emoji nel testo vanno bene.
+    Per le emoji nel titolo si usa l'header Tags con gli shortcode.
+    """
+    cleaned = value.replace("\n", " ").replace("\r", " ").strip()
+    return cleaned.encode("latin-1", "ignore").decode("latin-1")
+
+
+def _money(value: float) -> str:
+    return f"${value:,.0f}"
+
+
+# --------------------------------------------------------------------------
+# API generica
+# --------------------------------------------------------------------------
+
+def notify(
+    message: str,
+    *,
+    title: Optional[str] = None,
+    priority: str = "default",
+    tags: Optional[Iterable[str]] = None,
+    click: Optional[str] = None,
+    markdown: bool = False,
+) -> bool:
+    """
+    Pubblica un messaggio sul topic ntfy configurato.
+
+    Args:
+        message:  corpo della notifica (UTF-8, multilinea ammesso)
+        title:    titolo in grassetto
+        priority: min | low | default | high | urgent
+        tags:     shortcode emoji, es. ["chart_with_upwards_trend"]
+        click:    URL aperto al tap; default DASHBOARD_URL
+        markdown: chiede a ntfy di interpretare il body come Markdown
+
+    Returns:
+        True se accettata, False in ogni altro caso.
+    """
+    topic = _topic()
+    if not topic:
+        return False
+
+    headers = {"Priority": priority}
+
+    if title:
+        headers["Title"] = _ascii_header(title)
+    if tags:
+        headers["Tags"] = _ascii_header(",".join(tags))
+    if markdown:
+        headers["Markdown"] = "yes"
+
+    target = click or _dashboard_url()
+    if target:
+        headers["Click"] = _ascii_header(target)
+
+    token = (os.getenv("NTFY_TOKEN") or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        response = requests.post(
+            f"{_server()}/{topic}",
+            data=message.encode("utf-8"),
+            headers=headers,
+            timeout=TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return True
+    except Exception as exc:  # noqa: BLE001 - mai far fallire il trading per una push
+        print(f"[ntfy] notifica non inviata: {exc}", flush=True)
+        return False
+
+
+# --------------------------------------------------------------------------
+# Notifiche di dominio
+# --------------------------------------------------------------------------
+
+def notify_trader_push(message: str, trader: Optional[str] = None) -> bool:
+    """
+    Riepilogo inviato da un trader a fine sessione, via tool MCP "push".
+
+    Il nome del trader e' opzionale: se il modello non lo passa, la notifica
+    parte comunque con un titolo generico.
+    """
+    name = (trader or "").strip()
+    tag = TRADER_TAGS.get(name.lower(), "speech_balloon")
+    title = f"{name.title()} ha operato" if name else "Trading floor"
+    return notify(message, title=title, priority="default", tags=[tag])
+
+
+def notify_trade(
+    trader: str,
+    side: str,
+    symbol: str,
+    quantity: int,
+    price: float,
+    rationale: str,
+    balance: float,
+) -> bool:
+    """
+    Notifica per una singola operazione eseguita da un trader.
+
+    Args:
+        side:      "buy" o "sell"
+        price:     prezzo unitario di esecuzione (spread incluso)
+        rationale: la motivazione che il trader ha dichiarato
+        balance:   liquidita' rimasta dopo l'operazione
+    """
+    buying = side == "buy"
+    verb = "Acquisto" if buying else "Vendita"
+    total = price * quantity
+    reason = " ".join((rationale or "").split())
+    if len(reason) > 400:
+        reason = reason[:397] + "..."
+
+    lines = [
+        f"{verb} di {quantity} {symbol} a ${price:,.2f} (totale {_money(total)})",
+        f"Liquidita' residua: {_money(balance)}",
+    ]
+    if reason:
+        lines.append(f"Motivo: {reason}")
+
+    return notify(
+        "\n".join(lines),
+        title=f"{trader}: {verb.lower()} {symbol}",
+        priority="default",
+        tags=[TRADER_TAGS.get(trader.lower(), "speech_balloon")],
+    )
+
+
+def notify_cycle_summary(rows: Sequence[tuple[str, float, float]]) -> bool:
+    """
+    Classifica di fine ciclo.
+
+    Args:
+        rows: sequenza di (nome, valore_portafoglio, pnl), in qualsiasi ordine.
+    """
+    if not rows:
+        return False
+
+    ranked = sorted(rows, key=lambda r: r[1], reverse=True)
+    lines = []
+    for position, (name, value, pnl) in enumerate(ranked, start=1):
+        sign = "+" if pnl >= 0 else "-"
+        lines.append(f"{position}. {name}: {_money(value)} ({sign}{_money(abs(pnl))})")
+
+    leader = ranked[0][0]
+    body = "\n".join(lines)
+
+    return notify(
+        body,
+        title=f"Ciclo completato, in testa {leader}",
+        priority="low",
+        tags=["bar_chart"],
+    )
+
+
+def notify_trader_error(trader: str, error: BaseException | str) -> bool:
+    """Un trader e' andato in errore. Priorita' alta: di solito e' una chiave
+    scaduta, un rate limit o un server MCP che non parte."""
+    return notify(
+        f"{trader} ha interrotto il run.\n\n{error}",
+        title=f"Errore su {trader}",
+        priority="high",
+        tags=["rotating_light"],
+    )
+
+
+if __name__ == "__main__":
+    # Test manuale:  uv run -m backend.notifications
+    if not is_enabled():
+        print("NTFY_TOPIC non configurato: niente da testare.")
+    else:
+        ok = notify(
+            "Se leggi questo sul telefono, ntfy e' configurato correttamente.",
+            title="Trading floor: test",
+            tags=["test_tube"],
+        )
+        print("Notifica inviata." if ok else "Invio fallito.")
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/tracers.py
+==============================================================================
+from agents import TracingProcessor, Trace, Span
+from .database import write_log
+import secrets
+import string
+
+ALPHANUM = string.ascii_lowercase + string.digits 
+
+def make_trace_id(tag: str) -> str:
+    """
+    Return a string of the form 'trace_<tag><random>',
+    where the total length after 'trace_' is 32 chars.
+    """
+    tag += "0"
+    pad_len = 32 - len(tag)
+    random_suffix = ''.join(secrets.choice(ALPHANUM) for _ in range(pad_len))
+    return f"trace_{tag}{random_suffix}"
+
+class LogTracer(TracingProcessor):
+
+    def get_name(self, trace_or_span: Trace | Span) -> str | None:
+        trace_id = trace_or_span.trace_id
+        name = trace_id.split("_")[1]
+        if '0' in name:
+            return name.split("0")[0]
+        else:
+            return None
+
+    def on_trace_start(self, trace) -> None:
+        name = self.get_name(trace)
+        if name:
+            write_log(name, "trace", f"Started: {trace.name}")
+
+    def on_trace_end(self, trace) -> None:
+        name = self.get_name(trace)
+        if name:
+            write_log(name, "trace", f"Ended: {trace.name}")
+
+    def on_span_start(self, span) -> None:
+        name = self.get_name(span)
+        type = span.span_data.type if span.span_data else "span"
+        if name:
+            message = "Started"
+            if span.span_data:
+                if span.span_data.type:
+                    message += f" {span.span_data.type}"
+                if hasattr(span.span_data, "name") and span.span_data.name:
+                    message += f" {span.span_data.name}"
+                if hasattr(span.span_data, "server") and span.span_data.server:
+                    message += f" {span.span_data.server}"
+            if span.error:
+                message += f" {span.error}"
+            write_log(name, type, message)
+
+    def on_span_end(self, span) -> None:
+        name = self.get_name(span)
+        type = span.span_data.type if span.span_data else "span"
+        if name:
+            message = "Ended"
+            if span.span_data:
+                if span.span_data.type:
+                    
+                    message += f" {span.span_data.type}"
+                if hasattr(span.span_data, "name") and span.span_data.name:
+                    message += f" {span.span_data.name}"
+                if hasattr(span.span_data, "server") and span.span_data.server:
+                    message += f" {span.span_data.server}"
+            if span.error:
+                message += f" {span.error}"
+            write_log(name, type, message)
+
+    def force_flush(self) -> None:
+        pass
+
+    def shutdown(self) -> None:
+        pass
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/templates.py
+==============================================================================
+from datetime import datetime
+from .market import massive_api_key
+
+if massive_api_key:
+    note = "You have access to live market data tools; use them to look up share prices, trends, technical indicators and fundamentals."
+else:
+    note = "You have access to a market data tool; use your lookup_share_price tool to get the current share price for any symbol."
+
+
+def researcher_instructions():
+    return f"""You are a financial researcher. You are able to search the web for interesting financial news,
+look for possible trading opportunities, and help with research.
+Based on the request, you carry out necessary research and respond with your findings.
+Take time to make multiple searches to get a comprehensive overview, and then summarize your findings.
+If the web search tool raises an error due to rate limits, then use your other tool that fetches web pages instead.
+
+Important: making use of your knowledge graph to retrieve and store information on companies, websites and market conditions:
+
+Make use of your knowledge graph tools to store and recall entity information; use it to retrieve information that
+you have worked on previously, and store new information about companies, stocks and market conditions.
+Also use it to store web addresses that you find interesting so you can check them later.
+Draw on your knowledge graph to build your expertise over time.
+
+If there isn't a specific request, then just respond with investment opportunities based on searching latest news.
+The current datetime is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+"""
+
+def research_tool():
+    return "This tool researches online for news and opportunities, \
+either based on your specific request to look into a certain stock, \
+or generally for notable financial news and opportunities. \
+Describe what kind of research you're looking for."
+
+def trader_instructions(name: str):
+    return f"""
+You are {name}, a trader on the stock market. Your account is under your name, {name}.
+You actively manage your portfolio according to your strategy.
+You have access to tools including a researcher to research online for news and opportunities, based on your request.
+You also have tools to access to financial data for stocks. {note}
+And you have tools to buy and sell stocks using your account name {name}.
+Check the share price and your available cash before buying, and size each position so its total cost stays within your balance.
+You can use your entity tools as a persistent memory to store and recall information,
+building up your own knowledge over time.
+Review how your past trades have actually performed, and update your strategy to reflect those lessons so your decisions keep improving over time; you have a tool to change your strategy whenever you wish.
+Use these tools to carry out research, make decisions, and execute trades.
+After you've completed trading, send a push notification with a brief summary of activity, then reply with a 2-3 sentence appraisal.
+Your goal is to maximize your profits according to your strategy.
+"""
+
+def trade_message(name, strategy, account):
+    return f"""Based on your investment strategy, you should now look for new opportunities.
+Use the research tool to find news and opportunities consistent with your strategy.
+Do not use the 'get company news' tool; use the research tool instead.
+Use the tools to research stock price and other company information. {note}
+Finally, make your decision, then execute trades using the tools.
+Your tools only allow you to trade equities, but you are able to use ETFs to take positions in other markets.
+You do not need to rebalance your portfolio; you will be asked to do so later.
+Just make trades based on your strategy as needed.
+Your investment strategy:
+{strategy}
+Here is your current account:
+{account}
+Here is the current datetime:
+{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Now, carry out analysis, make your decision and execute trades. Your account name is {name}.
+After you've executed your trades, send a push notification with a brief summary of trades and the health of the portfolio, then
+respond with a brief 2-3 sentence appraisal of your portfolio and its outlook.
+"""
+
+def rebalance_message(name, strategy, account):
+    return f"""Based on your investment strategy, you should now examine your portfolio and decide if you need to rebalance.
+Use the research tool to find news and opportunities affecting your existing portfolio.
+Use the tools to research stock price and other company information affecting your existing portfolio. {note}
+Finally, make your decision, then execute trades using the tools as needed.
+You do not need to identify new investment opportunities at this time; you will be asked to do so later.
+Just rebalance your portfolio based on your strategy as needed.
+Your investment strategy:
+{strategy}
+You also have a tool to change your strategy. Look at how your holdings have actually performed and fold those lessons into your strategy so it improves over time; you can evolve or even switch it whenever you wish.
+Here is your current account:
+{account}
+Here is the current datetime:
+{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Now, carry out analysis, make your decision and execute trades. Your account name is {name}.
+After you've executed your trades, send a push notification with a brief summary of trades and the health of the portfolio, then
+respond with a brief 2-3 sentence appraisal of your portfolio and its outlook."""
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/mcp_servers.py
+==============================================================================
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+from agents.mcp import MCPServerStdio, create_static_tool_filter
+from .market import massive_api_key
+
+load_dotenv(override=True)
+
+PROJECT_DIR = str(Path(__file__).resolve().parent.parent)
+tavily_env = {"TAVILY_API_KEY": os.getenv("TAVILY_API_KEY")}
+TIMEOUT = 120
+
+
+def _passthrough_env(*names: str) -> dict[str, str]:
+    """Variabili da girare a un server MCP. I sottoprocessi stdio ereditano solo
+    un ambiente minimo (PATH, HOME...): senza questo, su GitHub Actions dove non
+    c'e' un .env, i server non vedrebbero NTFY_TOPIC ne' ACCOUNTS_DB."""
+    return {n: os.environ[n] for n in names if os.environ.get(n)}
+
+
+# Il DB e le notifiche servono ai server che scrivono i conti e mandano le push
+SERVER_ENV = _passthrough_env(
+    "ACCOUNTS_DB", "NTFY_TOPIC", "NTFY_SERVER", "NTFY_TOKEN", "DASHBOARD_URL"
+)
+
+# The market data server for the trader.
+# With a key, hand the agent Massive's own market data server, run locally over stdio.
+# Without one, use our market server, which serves simulated prices.
+if massive_api_key:
+    market_params = {
+        "command": "uvx",
+        "args": [
+            "--with", "mcp<2",
+            "--from", "git+https://github.com/massive-com/mcp_massive@v0.10.0",
+            "mcp_massive"
+        ],
+        "env": {"MASSIVE_API_KEY": massive_api_key},
+    }
+else:
+    market_params = {
+        "command": "uv",
+        "args": ["run", "-m", "backend.market_server"],
+        "cwd": PROJECT_DIR
+    }
+
+def trader_mcp_servers() -> list[MCPServerStdio]:
+    """The trader's MCP servers: our Accounts server, Push Notification and Market data."""
+    params = [
+        {"command": "uv", "args": ["run", "-m", "backend.accounts_server"], "cwd": PROJECT_DIR, "env": SERVER_ENV},
+        {"command": "uv", "args": ["run", "-m", "backend.push_server"], "cwd": PROJECT_DIR, "env": SERVER_ENV},
+        market_params,
+    ]
+    return [MCPServerStdio(p, client_session_timeout_seconds=TIMEOUT) for p in params]
+
+
+def researcher_mcp_servers(name: str) -> list[MCPServerStdio]:
+    """The researcher's MCP servers: Fetch, Tavily web search and Memory.
+
+    Tavily's server offers several tools; we restrict it to web search so the
+    researcher reaches for plain search rather than its heavier crawl or deep-research tools.
+    """
+    fetch = MCPServerStdio(
+        {"command": "uvx", "args": ["--with", "mcp<2","mcp-server-fetch"]},
+        client_session_timeout_seconds=TIMEOUT,
+    )
+    search = MCPServerStdio(
+        {"command": "npx", "args": ["-y", "tavily-mcp@latest"], "env": tavily_env},
+        client_session_timeout_seconds=TIMEOUT,
+        tool_filter=create_static_tool_filter(allowed_tool_names=["tavily_search"]),
+    )
+    memory = MCPServerStdio(
+        {
+            "command": "npx",
+            "args": ["-y", "mcp-memory-libsql"],
+            "env": {"LIBSQL_URL": f"file:./memory/{name}.db"},
+        },
+        client_session_timeout_seconds=TIMEOUT,
+    )
+    return [fetch, search, memory]
+    
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/accounts_server.py
+==============================================================================
+from mcp.server.fastmcp import FastMCP
+from .accounts import Account
+
+mcp = FastMCP("accounts_server")
+
+@mcp.tool()
+async def get_balance(name: str) -> float:
+    """Get the cash balance of the given account name.
+
+    Args:
+        name: The name of the account holder
+    """
+    return Account.get(name).balance
+
+@mcp.tool()
+async def get_holdings(name: str) -> dict[str, int]:
+    """Get the holdings of the given account name.
+
+    Args:
+        name: The name of the account holder
+    """
+    return Account.get(name).holdings
+
+@mcp.tool()
+async def buy_shares(name: str, symbol: str, quantity: int, rationale: str) -> float:
+    """Buy shares of a stock.
+
+    Args:
+        name: The name of the account holder
+        symbol: The symbol of the stock
+        quantity: The quantity of shares to buy
+        rationale: The rationale for the purchase and fit with the account's strategy
+    """
+    return Account.get(name).buy_shares(symbol, quantity, rationale)
+
+
+@mcp.tool()
+async def sell_shares(name: str, symbol: str, quantity: int, rationale: str) -> float:
+    """Sell shares of a stock.
+
+    Args:
+        name: The name of the account holder
+        symbol: The symbol of the stock
+        quantity: The quantity of shares to sell
+        rationale: The rationale for the sale and fit with the account's strategy
+    """
+    return Account.get(name).sell_shares(symbol, quantity, rationale)
+
+@mcp.tool()
+async def change_strategy(name: str, strategy: str) -> str:
+    """At your discretion, if you choose to, call this to change your investment strategy for the future.
+
+    Args:
+        name: The name of the account holder
+        strategy: The new strategy for the account
+    """
+    return Account.get(name).change_strategy(strategy)
+
+@mcp.resource("accounts://accounts_server/{name}")
+async def read_account_resource(name: str) -> str:
+    account = Account.get(name.lower())
+    return account.report()
+
+@mcp.resource("accounts://strategy/{name}")
+async def read_strategy_resource(name: str) -> str:
+    account = Account.get(name.lower())
+    return account.get_strategy()
+
+if __name__ == "__main__":
+    mcp.run(transport='stdio')
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/accounts_client.py
+==============================================================================
+import sys
+import mcp
+from pathlib import Path
+from mcp.client.stdio import stdio_client
+from mcp import StdioServerParameters
+
+
+if sys.platform.startswith("win"):
+    # Under Windows, IPykernel's sys.stderr is not backed by a real file
+    # descriptor. Redirect errlog to DEVNULL to avoid
+    #   io.UnsupportedOperation: fileno
+    # when stdio_client creates its subprocess.
+    try:
+        from IPython import get_ipython
+
+        if get_ipython().__class__.__name__ == "ZMQInteractiveShell":
+            import functools
+            import subprocess
+
+            # we are running inside Jupyter under Windows so redirect errlog
+            stdio_client = functools.partial(
+                stdio_client,
+                errlog=subprocess.DEVNULL,
+            )
+    except (ImportError, ModuleNotFoundError, AttributeError, ):
+        pass
+
+params = StdioServerParameters(
+    command="uv",
+    args=["run", "-m", "backend.accounts_server"],
+    cwd=str(Path(__file__).resolve().parent.parent),
+    env=None,
+)
+
+async def read_accounts_resource(name):
+    async with stdio_client(params) as streams:
+        async with mcp.ClientSession(*streams) as session:
+            await session.initialize()
+            result = await session.read_resource(f"accounts://accounts_server/{name}")
+            return result.contents[0].text
+
+async def read_strategy_resource(name):
+    async with stdio_client(params) as streams:
+        async with mcp.ClientSession(*streams) as session:
+            await session.initialize()
+            result = await session.read_resource(f"accounts://strategy/{name}")
+            return result.contents[0].text
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/market_server.py
+==============================================================================
+from mcp.server.fastmcp import FastMCP
+from .market import get_share_price
+
+mcp = FastMCP("market_server")
+
+@mcp.tool()
+async def lookup_share_price(symbol: str) -> float:
+    """This tool provides the current price of the given stock symbol.
+
+    Args:
+        symbol: the symbol of the stock
+    """
+    return get_share_price(symbol)
+
+if __name__ == "__main__":
+    mcp.run(transport='stdio')
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/push_server.py
+==============================================================================
+"""
+Server MCP che espone il tool "push" agli agenti-trader.
+
+Sostituisce Pushover con ntfy.sh. Il contratto del tool resta lo stesso, con
+un campo opzionale in piu': il nome del trader, cosi' la notifica dice chi ha
+operato senza doverlo dedurre dal testo.
+
+Gira come sottoprocesso via stdio, lanciato da backend/mcp_servers.py:
+    uv run -m backend.push_server
+"""
+
+from pydantic import BaseModel, Field
+from mcp.server.fastmcp import FastMCP
+
+from .notifications import is_enabled, notify_trader_push
+
+mcp = FastMCP("push_server")
+
+
+class PushModelArgs(BaseModel):
+    message: str = Field(description="A brief message to push")
+    trader: str | None = Field(
+        default=None,
+        description="Your name, so the notification says who is reporting",
+    )
+
+
+@mcp.tool()
+def push(args: PushModelArgs) -> str:
+    """Send a push notification with this brief message"""
+    print(f"Push [{args.trader or 'unknown'}]: {args.message}", flush=True)
+
+    if not is_enabled():
+        # Senza NTFY_TOPIC il trading floor deve funzionare lo stesso:
+        # l'agente riceve una risposta valida e prosegue.
+        return "Push notification skipped: no NTFY_TOPIC configured"
+
+    sent = notify_trader_push(args.message, args.trader)
+    return "Push notification sent" if sent else "Push notification failed"
+
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/traders.py
+==============================================================================
+from contextlib import AsyncExitStack
+from .accounts_client import read_accounts_resource, read_strategy_resource
+from .tracers import make_trace_id
+from .notifications import notify_trader_error
+from agents import Agent, Tool, Runner, OpenAIChatCompletionsModel, ModelSettings, trace
+from agents.retry import ModelRetrySettings, retry_policies
+from openai import AsyncOpenAI
+from dotenv import load_dotenv
+import os
+import json
+from .templates import (
+    researcher_instructions,
+    trader_instructions,
+    trade_message,
+    rebalance_message,
+    research_tool,
+)
+from .mcp_servers import trader_mcp_servers, researcher_mcp_servers
+
+load_dotenv(override=True)
+
+deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+google_api_key = os.getenv("GOOGLE_API_KEY")
+grok_api_key = os.getenv("GROK_API_KEY")
+openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+GROK_BASE_URL = "https://api.x.ai/v1"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+MAX_TURNS = 30
+
+# I piani gratuiti rispondono spesso 503 (sovraccarico) o 429 (rate limit): sono
+# errori transitori, quindi si riprova con attesa crescente invece di fermare il trader.
+MODEL_SETTINGS = ModelSettings(
+    retry=ModelRetrySettings(
+        max_retries=6,
+        backoff={"initial_delay": 10, "max_delay": 90, "multiplier": 2, "jitter": True},
+        policy=retry_policies.any(
+            retry_policies.http_status([429, 500, 502, 503, 504]),
+            retry_policies.network_error(),
+        ),
+    )
+)
+
+# AsyncOpenAI rifiuta una chiave mancante gia' alla creazione: con il segnaposto
+# l'import (es. dall'API di sola lettura) funziona anche senza chiavi, e l'errore
+# vero (401) compare solo se si usa davvero quel provider.
+def _client(base_url: str, api_key: str | None) -> AsyncOpenAI:
+    return AsyncOpenAI(base_url=base_url, api_key=api_key or "missing-key")
+
+
+openrouter_client = _client(OPENROUTER_BASE_URL, openrouter_api_key)
+deepseek_client = _client(DEEPSEEK_BASE_URL, deepseek_api_key)
+grok_client = _client(GROK_BASE_URL, grok_api_key)
+gemini_client = _client(GEMINI_BASE_URL, google_api_key)
+groq_client = _client(GROQ_BASE_URL, groq_api_key)
+
+
+def get_model(model_name: str):
+    # Prefisso esplicito "groq:" per non confondersi con i modelli OpenRouter,
+    # che hanno anch'essi lo slash (es. "groq:openai/gpt-oss-120b").
+    if model_name.startswith("groq:"):
+        return OpenAIChatCompletionsModel(model=model_name[len("groq:"):], openai_client=groq_client)
+    elif "/" in model_name:
+        return OpenAIChatCompletionsModel(model=model_name, openai_client=openrouter_client)
+    elif "deepseek" in model_name:
+        return OpenAIChatCompletionsModel(model=model_name, openai_client=deepseek_client)
+    elif "grok" in model_name:
+        return OpenAIChatCompletionsModel(model=model_name, openai_client=grok_client)
+    elif "gemini" in model_name:
+        return OpenAIChatCompletionsModel(model=model_name, openai_client=gemini_client)
+    else:
+        return model_name
+
+
+async def get_researcher(mcp_servers, model_name) -> Agent:
+    researcher = Agent(
+        name="Researcher",
+        instructions=researcher_instructions(),
+        model=get_model(model_name),
+        model_settings=MODEL_SETTINGS,
+        mcp_servers=mcp_servers,
+    )
+    return researcher
+
+#invoke researcher as a tool with as_tool function
+async def get_researcher_tool(mcp_servers, model_name) -> Tool:
+    researcher = await get_researcher(mcp_servers, model_name)
+    return researcher.as_tool(tool_name="Researcher", tool_description=research_tool())
+
+
+class Trader:
+    def __init__(self, name: str, lastname="Trader", model_name="gpt-5.4-mini"):
+        self.name = name
+        self.lastname = lastname
+        self.agent = None
+        self.model_name = model_name
+        self.do_trade = True
+
+    async def create_agent(self, trader_mcp_servers, researcher_mcp_servers) -> Agent:
+        tool = await get_researcher_tool(researcher_mcp_servers, self.model_name)
+        self.agent = Agent(
+            name=self.name,
+            instructions=trader_instructions(self.name),
+            model=get_model(self.model_name),
+            model_settings=MODEL_SETTINGS,
+            tools=[tool],
+            mcp_servers=trader_mcp_servers,
+        )
+        return self.agent
+
+    async def get_account_report(self) -> str:
+        account = await read_accounts_resource(self.name)
+        account_json = json.loads(account)
+        account_json.pop("portfolio_value_time_series", None)
+        return json.dumps(account_json)
+
+    async def run_agent(self, trader_mcp_servers, researcher_mcp_servers):
+        self.agent = await self.create_agent(trader_mcp_servers, researcher_mcp_servers)
+        account = await self.get_account_report()
+        strategy = await read_strategy_resource(self.name)
+        message = (
+            trade_message(self.name, strategy, account)
+            if self.do_trade
+            else rebalance_message(self.name, strategy, account)
+        )
+        await Runner.run(self.agent, message, max_turns=MAX_TURNS)
+
+    async def run_with_mcp_servers(self):
+        async with AsyncExitStack() as stack:
+            trader_servers = [
+                await stack.enter_async_context(server) for server in trader_mcp_servers()
+            ]
+            researcher_servers = [
+                await stack.enter_async_context(server)
+                for server in researcher_mcp_servers(self.name)
+            ]
+            await self.run_agent(trader_servers, researcher_servers)
+
+    async def run_with_trace(self):
+        trace_name = f"{self.name}-trading" if self.do_trade else f"{self.name}-rebalancing"
+        trace_id = make_trace_id(f"{self.name.lower()}")
+        with trace(trace_name, trace_id=trace_id):
+            await self.run_with_mcp_servers()
+
+    async def run(self):
+        try:
+            await self.run_with_trace()
+        except Exception as e:
+            print(f"Error running trader {self.name}: {e}")
+            notify_trader_error(self.name, e)
+        self.do_trade = not self.do_trade
+<<< FINE
+
+==============================================================================
+>>> FILE: backend/trading_floor.py
+==============================================================================
+from .traders import Trader
+from .accounts import Account
+from .notifications import notify_cycle_summary
+from typing import List
+import asyncio
+from .tracers import LogTracer
+from agents import add_trace_processor
+from .market import is_market_open
+from dotenv import load_dotenv
+import os
+
+load_dotenv(override=True)
+
+RUN_EVERY_N_MINUTES = int(os.getenv("RUN_EVERY_N_MINUTES", "60"))
+RUN_EVEN_WHEN_MARKET_IS_CLOSED = (
+    os.getenv("RUN_EVEN_WHEN_MARKET_IS_CLOSED", "false").strip().lower() == "true"
+)
+USE_MANY_MODELS = os.getenv("USE_MANY_MODELS", "false").strip().lower() == "true"
+
+# Pausa tra un trader e il successivo, per lasciar scorrere la finestra al minuto
+# dei rate limit. Mettila a 0 se usi un modello a pagamento senza limiti stretti.
+PAUSE_BETWEEN_TRADERS_SECONDS = int(os.getenv("PAUSE_BETWEEN_TRADERS_SECONDS", "30"))
+
+# Un solo ciclo ed esci, invece del loop infinito. Serve al workflow GitHub
+# Actions (.github/workflows/trading-cycle.yml): ogni esecuzione del job e' un
+# processo a se', quindi e' quel job a fare da "scheduler" con un cron, non
+# questo script. In locale lascialo a false.
+RUN_ONCE = os.getenv("RUN_ONCE", "false").strip().lower() == "true"
+
+names = ["Alpha", "Beta", "Gamma"]
+lastnames = ["High Risk", "Medium Risk", "Low Risk"]
+
+if USE_MANY_MODELS:
+    model_names = [
+        "gpt-5.5",
+        "deepseek-v4-flash",
+        "gemini-3.5-flash",
+    ]
+    short_model_names = ["GPT 5.5", "DeepSeek V4", "Gemini 3.5 Flash"]
+else:
+    # TRADER_MODEL permette di scegliere il modello senza toccare il codice,
+    # es. "gemini-2.5-flash" (piano gratuito di Google AI Studio, vedi README).
+    default_model = os.getenv("TRADER_MODEL", "gpt-5.4-mini").strip()
+    model_names = [default_model] * len(names)
+    # MODEL_LABEL cambia solo il nome mostrato in dashboard (es. "Simulato" nella demo)
+    short_model_names = [os.getenv("MODEL_LABEL", "").strip() or default_model] * len(names)
+
+
+def create_traders() -> List[Trader]:
+    traders = []
+    for name, lastname, model_name in zip(names, lastnames, model_names):
+        traders.append(Trader(name, lastname, model_name))
+    return traders
+
+
+def _notify_cycle_results() -> None:
+    """Legge i conti appena aggiornati e manda la classifica su ntfy."""
+    rows = []
+    for name in names:
+        account = Account.get(name)
+        value = account.calculate_portfolio_value()
+        rows.append((name, value, account.calculate_profit_loss(value)))
+    notify_cycle_summary(rows)
+
+
+async def run_traders_in_sequence(traders: List[Trader]) -> None:
+    """Un trader alla volta, con una pausa in mezzo.
+
+    In parallelo i tre agenti sommano le loro richieste e sforano subito i limiti
+    dei piani gratuiti (es. 15 richieste/minuto su Gemini Flash Lite, 8K token/minuto
+    su Groq). In sequenza un ciclo dura di piu', ma resta dentro le quote.
+    """
+    for index, trader in enumerate(traders):
+        if index and PAUSE_BETWEEN_TRADERS_SECONDS:
+            await asyncio.sleep(PAUSE_BETWEEN_TRADERS_SECONDS)
+        await trader.run()
+
+
+async def run_every_n_minutes():
+    add_trace_processor(LogTracer())
+    traders = create_traders()
+    while True:
+        if RUN_EVEN_WHEN_MARKET_IS_CLOSED or is_market_open():
+            await run_traders_in_sequence(traders)
+            _notify_cycle_results()
+        else:
+            print("Market is closed, skipping run")
+
+        if RUN_ONCE:
+            break
+        await asyncio.sleep(RUN_EVERY_N_MINUTES * 60)
+
+
+if __name__ == "__main__":
+    if RUN_ONCE:
+        print("RUN_ONCE=true: eseguo un solo ciclo ed esco")
+    else:
+        print(f"Starting scheduler to run every {RUN_EVERY_N_MINUTES} minutes")
+    asyncio.run(run_every_n_minutes())
+<<< FINE
+
+==============================================================================
+>>> FILE: .github/workflows/trading-cycle.yml
+==============================================================================
+# Fa girare UN ciclo di trading all'ora, gratis, senza nessun server sempre acceso.
+#
+# Come funziona:
+#   1. GitHub Actions clona il repo su un runner temporaneo (Python e Node
+#      sono gia' preinstallati su ubuntu-latest).
+#   2. Installa le dipendenze e lancia backend/trading_floor.py con RUN_ONCE=true:
+#      un solo giro dei 4 trader, poi il processo esce da solo.
+#   3. Il ciclo scrive su data/accounts.db. Il job lo ricommitta nel repo.
+#   4. Render ha "autoDeploy: true" su entrambi i servizi (vedi render.yaml),
+#      quindi il push fa ripartire l'API con i dati freschi in automatico.
+#
+# Costo: zero. I runner di GitHub Actions sono gratuiti senza limiti sui repo
+# pubblici; sui privati il piano free da' 2000 minuti/mese, e un ciclo qui
+# dura qualche minuto (i trader girano uno alla volta), quindi anche ogni ora si resta ben sotto la soglia.
+#
+# Setup richiesto, una tantum:
+#   Settings del repo -> Secrets and variables -> Actions -> New repository
+#   secret, per ognuna delle chiavi elencate sotto "env:".
+#   Settings -> Actions -> General -> Workflow permissions -> "Read and write
+#   permissions", altrimenti il job non puo' pushare il commit del punto 3.
+
+name: Trading cycle
+
+on:
+  # Cron DISATTIVATO: la demo pubblicata usa dati simulati (backend/demo_seed.py) e
+  # non ha un modello configurato. Per riattivare gli aggiornamenti automatici
+  # togli il commento, imposta i secrets e la variabile TRADER_MODEL (vedi sotto).
+  # schedule:
+  #   - cron: "0 15,20 * * 1-5"   # 2 volte al giorno, lun-ven, 15:00 e 20:00 UTC
+  workflow_dispatch: {}     # bottone "Run workflow" nella tab Actions, per test
+
+# Evita che due esecuzioni si sovrappongano se un ciclo dura piu' di un'ora.
+concurrency:
+  group: trading-cycle
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # serve per ricommittare data/accounts.db
+
+jobs:
+  run-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Installa uv
+        run: pip install uv
+
+      - name: Installa le dipendenze
+        run: uv sync
+
+      - name: Esegui un ciclo di trading
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # non serve con Gemini
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TRADER_MODEL: ${{ vars.TRADER_MODEL || 'gpt-5.4-mini' }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # Facoltativa: senza, i prezzi arrivano dal simulatore, a costo zero.
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          RUN_ONCE: "true"
+          RUN_EVEN_WHEN_MARKET_IS_CLOSED: "true"
+          ACCOUNTS_DB: data/accounts.db
+        run: uv run -m backend.trading_floor
+
+      - name: Ricommitta il database aggiornato
+        run: |
+          git config user.name "trading-floor-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/accounts.db
+          git diff --cached --quiet && echo "Nessuna modifica" || git commit -m "Trading cycle $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
+<<< FINE
+
+==============================================================================
+>>> FILE: Dockerfile
+==============================================================================
+# Immagine unica per il trading floor.
+#
+# Perche' serve Docker e non basta il runtime Python di un PaaS:
+# il motore lancia i server MCP come sottoprocessi, e tre di questi
+# girano su Node (npx tavily-mcp, npx mcp-memory-libsql) mentre altri
+# usano uv/uvx. Un runtime "solo Python" non ha ne' npx ne' uv, quindi
+# il Researcher parte senza ricerca web e senza memoria.
+#
+# Build:  docker build -t trading-floor .
+# Run:    docker run --env-file .env -p 8000:8000 -v $(pwd)/data:/app/data trading-floor
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    NODE_MAJOR=20
+
+# Node per i server MCP basati su npx, curl per installare uv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates gnupg git build-essential \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv: usato sia per installare le dipendenze sia dai server MCP a runtime
+RUN pip install uv
+
+WORKDIR /app
+
+# Dipendenze Python prima del codice, cosi' il layer resta in cache
+COPY pyproject.toml ./
+RUN uv pip install --system -r pyproject.toml
+
+# Build del frontend: il risultato e' statico, Node serve solo qui
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci
+COPY frontend ./frontend
+RUN cd frontend && npm run build
+
+# Codice applicativo
+COPY backend ./backend
+COPY demo ./demo
+COPY app.py ./
+
+# accounts.db vive qui: montaci un volume o un disco persistente,
+# altrimenti lo stato sparisce a ogni riavvio del container.
+RUN mkdir -p /app/data
+ENV ACCOUNTS_DB=/app/data/accounts.db
+
+EXPOSE 8000
+
+# Di default parte solo l'API. Il motore si lancia come comando separato:
+#   docker run ... trading-floor python -m backend.trading_floor
+# oppure con la lifespan di FastAPI (vedi README, opzione "processo unico").
+CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000"]
+<<< FINE
+
+==============================================================================
+>>> FILE: .env.example  (versione modalita' reale: sostituisce quella della demo)
+==============================================================================
+# Copia in .env e riempi i valori. Il .env NON va mai committato.
+# Ogni variabile qui sotto e' letta da almeno una riga di codice: se ne aggiungi
+# una che nessuno legge, tra sei mesi non ricorderai se serve.
+
+# ---------------------------------------------------------------------------
+# Modelli
+# ---------------------------------------------------------------------------
+
+# Obbligatoria: e' il default dell'OpenAI Agents SDK e serve anche per il
+# tracing. Con USE_MANY_MODELS=false basta questa.
+OPENAI_API_KEY=sk-...
+
+# Modello dei trader (default gpt-5.4-mini). Gratis: Gemini (GOOGLE_API_KEY) o Groq (GROQ_API_KEY)
+# TRADER_MODEL=gemini-3.5-flash-lite
+# Con Groq: prefisso "groq:" e GROQ_API_KEY (console.groq.com)
+# TRADER_MODEL=groq:openai/gpt-oss-120b
+# GROQ_API_KEY=
+
+# Opzionali: servono con USE_MANY_MODELS=true o con TRADER_MODEL=gemini-*, dove ogni trader gira
+# su un provider diverso (vedi get_model() in backend/traders.py)
+# DEEPSEEK_API_KEY=
+# GOOGLE_API_KEY=
+# GROK_API_KEY=
+# OPENROUTER_API_KEY=
+
+# ---------------------------------------------------------------------------
+# Dati e ricerca
+# ---------------------------------------------------------------------------
+
+# Prezzi azionari reali. SENZA questa chiave il progetto funziona lo stesso:
+# backend/market_simulator.py genera prezzi deterministici e plausibili.
+# Lasciala vuota per far girare tutto a costo zero di dati.
+# MASSIVE_API_KEY=
+
+# Ricerca web dell'agente Researcher, via server MCP tavily-mcp (npx).
+# Senza questa chiave il researcher perde la ricerca e resta solo il fetch.
+TAVILY_API_KEY=tvly-...
+
+# ---------------------------------------------------------------------------
+# Notifiche push (ntfy.sh)
+# ---------------------------------------------------------------------------
+
+# Topic ntfy: scegline uno lungo e non indovinabile. Chiunque lo conosca puo'
+# leggere e scrivere sul canale. Iscriviti allo stesso topic dall'app ntfy.
+NTFY_TOPIC=trading-floor-cambia-questo-in-qualcosa-di-random
+
+# Server alternativo, solo per istanze self-hosted
+# NTFY_SERVER=https://ntfy.sh
+
+# Bearer token, solo se il topic e' protetto
+# NTFY_TOKEN=tk_...
+
+# URL della dashboard: diventa il link aperto al tap sulla notifica
+# DASHBOARD_URL=https://autonomous-traders.onrender.com
+
+# ---------------------------------------------------------------------------
+# Comportamento del motore (backend/trading_floor.py)
+# ---------------------------------------------------------------------------
+
+# Ogni quanti minuti gira un ciclo. Ogni ciclo lancia 3 trader e costa crediti.
+# In sviluppo tienilo alto, o il conto sale mentre guardi la dashboard.
+RUN_EVERY_N_MINUTES=60
+
+# true per farlo girare anche a mercato chiuso (utile per fare demo la sera)
+RUN_EVEN_WHEN_MARKET_IS_CLOSED=false
+
+# true assegna un modello diverso a ciascun trader, false usa lo stesso per
+# tutti e tre (confronto piu' pulito tra strategie, non tra modelli)
+USE_MANY_MODELS=false
+
+# Secondi di pausa tra un trader e il successivo. I trader girano in sequenza per
+# stare nei limiti dei piani gratuiti; con un modello a pagamento metti 0.
+# PAUSE_BETWEEN_TRADERS_SECONDS=30
+<<< FINE

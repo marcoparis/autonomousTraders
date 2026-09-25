@@ -1,3 +1,10 @@
+"""Persistenza SQLite: tabella accounts (un conto JSON per trader) e tabella logs.
+
+E' l'unico punto di contatto tra chi scrive (demo_seed.py, o il motore in modalita'
+reale) e chi legge (api.py). Il file di default, data/accounts.db, e' committato di
+proposito: e' il database della demo pubblicata su Render.
+"""
+
 import os
 import sqlite3
 import json
@@ -5,11 +12,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-# Configurabile per il deploy: in locale resta "accounts.db" nella working
-# directory (comportamento originale, invariato). Sul servizio pubblicato
-# (Render, o il workflow GitHub Actions che aggiorna la demo) si punta invece
-# a "data/accounts.db", un percorso versionato apposta - vedi README.
-DB = os.getenv("ACCOUNTS_DB", "accounts.db")
+# Stesso file in locale e su Render; ACCOUNTS_DB permette di puntare altrove.
+DB = os.getenv("ACCOUNTS_DB", "data/accounts.db")
 
 _db_dir = os.path.dirname(DB)
 if _db_dir:

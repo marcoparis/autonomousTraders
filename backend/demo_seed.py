@@ -6,7 +6,10 @@ pubblicata. Lo storico e' quindi coerente con cio' che la dashboard mostra oggi.
 
 Serve solo a popolare la vetrina. I dati sono inventati e vanno presentati come tali.
 
-    ACCOUNTS_DB=data/accounts.db uv run -m backend.demo_seed
+    uv run -m backend.demo_seed
+
+Scrive in data/accounts.db (il database della demo, committato). Cancella i conti
+esistenti e rigenera 10 giorni di operazioni con date relative a oggi.
 """
 
 import random

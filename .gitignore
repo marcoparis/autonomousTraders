@@ -11,34 +11,17 @@ __pycache__/
 venv/
 .pytest_cache/
 .ruff_cache/
-.mypy_cache/
 
-# --- Stato generato a runtime ---
-# accounts.db (in locale, root del progetto) si ricrea con
-# "uv run -m backend.reset": va ignorato, e' stato personale di sviluppo.
-#
-# data/accounts.db invece NON e' ignorato (nota lo slash iniziale sotto, che
-# ancora il pattern solo alla root): e' il database della demo pubblicata,
-# aggiornato a mano una volta o in automatico dal workflow GitHub Actions
-# .github/workflows/trading-cycle.yml. Va committato di proposito.
-/accounts.db
+# --- Database ---
+# data/accounts.db NON e' ignorato: e' il database della demo pubblicata.
 *.db-journal
 *.db-wal
 *.db-shm
-
-# Grafo di conoscenza dei researcher (mcp-memory-libsql) e store vettoriale
-memory/
-!memory/.gitkeep
 
 # --- Frontend ---
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
-
-# --- Artefatti di debug e sandbox ---
-.playwright-mcp/
-playwright_check.png
-sandbox/
 
 # --- Sistema / editor ---
 .DS_Store

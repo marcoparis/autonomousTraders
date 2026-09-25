@@ -1,3 +1,11 @@
+"""Azzera i tre conti a 10.000 $ e assegna a ciascuno la strategia iniziale.
+
+    uv run -m backend.reset
+
+Attenzione: cancella anche lo storico. Nella demo, demo_seed.py lo richiama prima di
+generare le operazioni inventate.
+"""
+
 from .accounts import Account
 
 alpha_strategy = """

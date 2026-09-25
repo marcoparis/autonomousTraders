@@ -1,5 +1,5 @@
 // The per-trader activity log. Rows come from the backend already coloured by
-// type (the same custom-tracing colours as the Gradio dashboard).
+// type.
 
 import type { LogRow } from "./api";
 

@@ -1,18 +1,18 @@
-"""HTTP API over the trading floor, for a separate frontend to consume.
+"""API HTTP in sola lettura: serve al frontend i conti dei trader come JSON.
 
-The Gradio dashboard in demo/ reads accounts.db in-process. This serves the same
-data as JSON so a decoupled web frontend can render it. Everything here is
-read-only; the trading floor writes the database out of band.
+Legge il database (data/accounts.db) e non scrive mai: chi lo popola e' demo_seed.py
+(operazioni inventate) oppure, in modalita' reale, il motore (COME_RENDERLO_REALE.txt).
 
-Run it from the project root so it shares the engine's accounts.db:
+Avvio in locale, dalla cartella del progetto:
 
-    uv run uvicorn backend.api:app --port 8000
+    uv run python -m uvicorn backend.api:app --port 8000
 
-ALLOWED_ORIGINS (optional): comma-separated list of origins allowed to call this
-API cross-origin. Needed only when the frontend is served from a different
-origin than this API - e.g. the free Render deploy, where the frontend is a
-Static Site and this API is a separate Web Service. In local dev, Vite's proxy
-makes the browser see one origin, so this stays unset and CORS never kicks in.
+Variabili d'ambiente (tutte facoltative):
+  MODEL_LABEL      nome del modello mostrato in dashboard (default "Simulato"; in
+                   modalita' reale mettici il nome del modello usato dagli agenti)
+  ALLOWED_ORIGINS  origini ammesse dal CORS, separate da virgola. Serve solo se il
+                   frontend e' su un dominio diverso dall'API (Render: sito statico
+                   + web service). In locale il proxy di Vite rende inutile il CORS.
 """
 
 import os
@@ -23,9 +23,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend import market
 from backend.accounts import Account
 from backend.database import read_log
-from backend.trading_floor import names, lastnames, short_model_names
 
-# Mirrors the log colours in demo/ so the frontend reproduces the same panel.
+# I tre trader della demo (le strategie stanno in reset.py).
+names = ["Alpha", "Beta", "Gamma"]
+lastnames = ["High Risk", "Medium Risk", "Low Risk"]
+model_label = os.getenv("MODEL_LABEL", "").strip() or "Simulato"
+short_model_names = [model_label] * len(names)
+
+# Colore di ogni tipo di riga nel pannello di log della dashboard.
 LOG_COLORS = {
     "trace": "#87CEEB",
     "agent": "#00dddd",

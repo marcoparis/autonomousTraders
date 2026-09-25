@@ -4,12 +4,9 @@
 #   - il frontend Vite come Static Site (gratis, sempre acceso, niente spin-down)
 #   - l'API FastAPI in sola lettura come Web Service free
 #
-# Cosa NON mette online: il motore (backend/trading_floor.py).
-# Non e' una dimenticanza. Su Render i background worker non hanno un
-# instance type gratuito, il filesystem dei servizi free e' effimero e
-# il runtime Python non ha npx, che serve a due dei server MCP.
-# Il motore lo esegui in locale e committi un accounts.db popolato,
-# oppure passi al Dockerfile su un piano a pagamento (vedi README).
+# Cosa NON mette online: il motore con gli agenti LLM. Non fa parte della demo:
+# i dati mostrati sono simulati (backend/demo_seed.py). Come renderlo reale, e
+# perche' su Render free non gira, e' spiegato in COME_RENDERLO_REALE.txt.
 
 services:
   # --------------------------------------------------------------------
@@ -28,18 +25,8 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.7
 
-      # Serve al tracing dell'Agents SDK importato da backend.trading_floor
-      - key: OPENAI_API_KEY
-        sync: false
-
-      # Lasciata vuota di proposito: l'API usa il simulatore di prezzi,
-      # cosi' la demo non consuma quota di dati di mercato.
-      # - key: MASSIVE_API_KEY
-
-      # Il database della demo, committato nel repo (vedi .gitignore) invece
-      # dell'accounts.db locale. Se usi il workflow GitHub Actions per
-      # l'aggiornamento automatico, deve essere lo STESSO percorso impostato
-      # li' dentro come ACCOUNTS_DB.
+      # Il database della demo, committato nel repo. E' anche il default del
+      # codice: la riga c'e' per renderlo esplicito.
       - key: ACCOUNTS_DB
         value: data/accounts.db
 
