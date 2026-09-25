@@ -43,6 +43,10 @@ services:
       - key: ACCOUNTS_DB
         value: data/accounts.db
 
+      # Nome del "modello" mostrato in dashboard: nella demo i dati sono simulati
+      - key: MODEL_LABEL
+        value: Simulato
+
       # Origini ammesse dal CORS. Aggiorna con l'URL reale del sito statico
       # dopo il primo deploy.
       - key: ALLOWED_ORIGINS

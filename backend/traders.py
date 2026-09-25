@@ -46,11 +46,18 @@ MODEL_SETTINGS = ModelSettings(
     )
 )
 
-openrouter_client = AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=openrouter_api_key)
-deepseek_client = AsyncOpenAI(base_url=DEEPSEEK_BASE_URL, api_key=deepseek_api_key)
-grok_client = AsyncOpenAI(base_url=GROK_BASE_URL, api_key=grok_api_key)
-gemini_client = AsyncOpenAI(base_url=GEMINI_BASE_URL, api_key=google_api_key)
-groq_client = AsyncOpenAI(base_url=GROQ_BASE_URL, api_key=groq_api_key)
+# AsyncOpenAI rifiuta una chiave mancante gia' alla creazione: con il segnaposto
+# l'import (es. dall'API di sola lettura) funziona anche senza chiavi, e l'errore
+# vero (401) compare solo se si usa davvero quel provider.
+def _client(base_url: str, api_key: str | None) -> AsyncOpenAI:
+    return AsyncOpenAI(base_url=base_url, api_key=api_key or "missing-key")
+
+
+openrouter_client = _client(OPENROUTER_BASE_URL, openrouter_api_key)
+deepseek_client = _client(DEEPSEEK_BASE_URL, deepseek_api_key)
+grok_client = _client(GROK_BASE_URL, grok_api_key)
+gemini_client = _client(GEMINI_BASE_URL, google_api_key)
+groq_client = _client(GROQ_BASE_URL, groq_api_key)
 
 
 def get_model(model_name: str):

@@ -42,7 +42,8 @@ else:
     # es. "gemini-2.5-flash" (piano gratuito di Google AI Studio, vedi README).
     default_model = os.getenv("TRADER_MODEL", "gpt-5.4-mini").strip()
     model_names = [default_model] * len(names)
-    short_model_names = [default_model] * len(names)
+    # MODEL_LABEL cambia solo il nome mostrato in dashboard (es. "Simulato" nella demo)
+    short_model_names = [os.getenv("MODEL_LABEL", "").strip() or default_model] * len(names)
 
 
 def create_traders() -> List[Trader]:
