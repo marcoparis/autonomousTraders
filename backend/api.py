@@ -1,15 +1,14 @@
 """API HTTP in sola lettura: serve al frontend i conti dei trader come JSON.
 
-Legge il database (data/accounts.db) e non scrive mai: chi lo popola e' demo_seed.py
-(operazioni inventate) oppure, in modalita' reale, il motore (COME_RENDERLO_REALE.txt).
+Legge il database scritto dal motore (backend/trading_floor.py) e non scrive mai.
 
 Avvio in locale, dalla cartella del progetto:
 
     uv run python -m uvicorn backend.api:app --port 8000
 
-Variabili d'ambiente (tutte facoltative):
-  MODEL_LABEL      nome del modello mostrato in dashboard (default "Simulato"; in
-                   modalita' reale mettici il nome del modello usato dagli agenti)
+Variabili d'ambiente:
+  MASSIVE_API_KEY  prezzi correnti delle posizioni; senza, si usa l'ultimo prezzo
+                   a cui il trader ha comprato o venduto
   ALLOWED_ORIGINS  origini ammesse dal CORS, separate da virgola. Serve solo se il
                    frontend e' su un dominio diverso dall'API (Render: sito statico
                    + web service). In locale il proxy di Vite rende inutile il CORS.
@@ -22,13 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend import market
 from backend.accounts import Account
+from backend.config import TRADERS
 from backend.database import read_log
-
-# I tre trader della demo (le strategie stanno in reset.py).
-names = ["Alpha", "Beta", "Gamma"]
-lastnames = ["High Risk", "Medium Risk", "Low Risk"]
-model_label = os.getenv("MODEL_LABEL", "").strip() or "Simulato"
-short_model_names = [model_label] * len(names)
 
 # Colore di ogni tipo di riga nel pannello di log della dashboard.
 LOG_COLORS = {
@@ -41,10 +35,7 @@ LOG_COLORS = {
 }
 DEFAULT_LOG_COLOR = "#87CEEB"
 
-roster = [
-    {"name": name, "lastname": lastname, "model_name": model_name}
-    for name, lastname, model_name in zip(names, lastnames, short_model_names)
-]
+roster = [{"name": t.name, "lastname": t.profile, "model_name": t.model} for t in TRADERS]
 roster_by_name = {trader["name"].lower(): trader for trader in roster}
 
 app = FastAPI(title="Trading Floor")
@@ -66,11 +57,26 @@ def average_cost(account: Account, symbol: str) -> float:
     return spend / bought if bought else 0.0
 
 
+def last_trade_price(account: Account, symbol: str) -> float:
+    """Price of the most recent buy or sell of this symbol, used when live prices are unavailable."""
+    for t in reversed(account.transactions):
+        if t.symbol == symbol:
+            return t.price
+    return 0.0
+
+
+def current_price(account: Account, symbol: str) -> float:
+    try:
+        return market.get_share_price(symbol)
+    except Exception:
+        return last_trade_price(account, symbol)
+
+
 def holdings_detail(account: Account) -> list[dict]:
     """Current holdings enriched with price, market value and unrealised profit."""
     details = []
     for symbol, quantity in account.holdings.items():
-        price = market.get_share_price(symbol)
+        price = current_price(account, symbol)
         cost = average_cost(account, symbol)
         details.append(
             {
@@ -101,7 +107,7 @@ def get_traders() -> list[dict]:
 @app.get("/api/market")
 def get_market() -> dict:
     """Which price source is live, and whether the market is open."""
-    source = "massive" if market.massive_api_key else "simulator"
+    source = "massive" if market.massive_api_key else "last_trade"
     return {"source": source, "is_market_open": market.is_market_open()}
 
 

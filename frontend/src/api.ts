@@ -60,7 +60,7 @@ export interface LogRow {
 }
 
 export interface MarketInfo {
-  source: "massive" | "simulator";
+  source: "massive" | "last_trade";
   is_market_open: boolean;
 }
 

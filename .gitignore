@@ -13,10 +13,12 @@ venv/
 .ruff_cache/
 
 # --- Database ---
-# data/accounts.db NON e' ignorato: e' il database della demo pubblicata.
+# data/accounts.db NON e' ignorato: lo aggiorna il workflow e lo legge l'API su Render.
 *.db-journal
 *.db-wal
 *.db-shm
+# memoria a lungo termine dei researcher (server MCP mcp-memory-libsql)
+memory/
 
 # --- Frontend ---
 frontend/node_modules/

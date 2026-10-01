@@ -1,0 +1,78 @@
+# Un ciclo di trading per esecuzione, senza nessun server sempre acceso.
+#
+#   1. GitHub Actions prepara un runner temporaneo (Python e Node sono gia' installati).
+#   2. Lancia backend/trading_floor.py con RUN_ONCE=true: un giro di tutti i trader
+#      definiti in traders.toml, poi il processo esce.
+#   3. Il ciclo scrive su data/accounts.db, che il job ricommitta nel repo.
+#   4. Render ha autoDeploy attivo: il commit aggiorna la dashboard da solo.
+#
+# Gratis sui repo pubblici; sui privati il piano free da' 2000 minuti al mese.
+#
+# Da configurare una volta sola, in Settings del repository:
+#   - Secrets and variables -> Actions -> Secrets: le chiavi elencate sotto "env:"
+#   - Secrets and variables -> Actions -> Variables: TRADER_MODEL (facoltativa)
+#   - Actions -> General -> Workflow permissions -> "Read and write permissions",
+#     altrimenti il job non puo' fare il commit del punto 3.
+
+name: Trading cycle
+
+on:
+  # Togli il commento dopo aver impostato i secrets: due cicli al giorno, lun-ven,
+  # alle 15:00 e alle 19:00 UTC, orari in cui la borsa di New York e' aperta sia con
+  # l'ora legale sia con quella solare (festivita' USA escluse).
+  # schedule:
+  #   - cron: "0 15,19 * * 1-5"
+  workflow_dispatch: {}     # bottone "Run workflow" nella tab Actions, per test
+
+# Evita che due esecuzioni si sovrappongano se un ciclo dura piu' di un'ora.
+concurrency:
+  group: trading-cycle
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # serve per ricommittare data/accounts.db
+
+jobs:
+  run-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Installa uv
+        run: pip install uv
+
+      - name: Installa le dipendenze
+        run: uv sync
+
+      - name: Esegui un ciclo di trading
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TRADER_MODEL: ${{ vars.TRADER_MODEL || 'gpt-5.4-mini' }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          RUN_ONCE: "true"
+          # Gli orari li decide il cron: non serve chiedere a Massive se la borsa e' aperta
+          RUN_EVEN_WHEN_MARKET_IS_CLOSED: "true"
+          ACCOUNTS_DB: data/accounts.db
+        run: uv run -m backend.trading_floor
+
+      - name: Ricommitta il database aggiornato
+        run: |
+          git config user.name "trading-floor-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/accounts.db
+          git diff --cached --quiet && echo "Nessuna modifica" || git commit -m "Trading cycle $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
