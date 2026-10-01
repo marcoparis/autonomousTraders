@@ -32,6 +32,7 @@ with sqlite3.connect(DB) as conn:
             message TEXT
         )
     ''')
+    cursor.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
     conn.commit()
 
 def write_account(name, account_dict):
@@ -68,6 +69,23 @@ def write_log(name: str, type: str, message: str):
             VALUES (?, datetime('now'), ?, ?)
         ''', (name.lower(), type, message))
         conn.commit()
+
+def read_setting(key: str, default: str) -> str:
+    """Read a small piece of state that must survive between runs."""
+    with sqlite3.connect(DB) as conn:
+        row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
+        return row[0] if row else default
+
+
+def write_setting(key: str, value: str) -> None:
+    with sqlite3.connect(DB) as conn:
+        conn.execute(
+            'INSERT INTO settings (key, value) VALUES (?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            (key, value),
+        )
+        conn.commit()
+
 
 def clear_logs(name: str) -> None:
     """Delete every log entry of the given trader."""

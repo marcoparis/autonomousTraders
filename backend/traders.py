@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from .accounts_client import read_accounts_resource, read_strategy_resource
+from .database import read_setting, write_setting
 from .mcp_servers import researcher_mcp_servers, trader_mcp_servers
 from .notifications import notify_trader_error
 from .templates import (
@@ -101,7 +102,10 @@ class Trader:
         self.lastname = lastname
         self.agent = None
         self.model_name = model_name
-        self.do_trade = True
+        # I cicli si alternano: nuove opportunita' / ribilanciamento. L'alternanza e'
+        # salvata nel database perche' su GitHub Actions ogni ciclo e' un processo nuovo.
+        self._mode_key = f"{name.lower()}_next_mode"
+        self.do_trade = read_setting(self._mode_key, "trade") == "trade"
 
     async def create_agent(self, trader_mcp_servers, researcher_mcp_servers) -> Agent:
         tool = await get_researcher_tool(researcher_mcp_servers, self.model_name)
@@ -156,3 +160,4 @@ class Trader:
             print(f"Error running trader {self.name}: {e}")
             notify_trader_error(self.name, e)
         self.do_trade = not self.do_trade
+        write_setting(self._mode_key, "trade" if self.do_trade else "rebalance")
